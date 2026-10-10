@@ -6,13 +6,14 @@ waiting for you without switching to the terminal.
 
 - **Blue, breathing:** working. **Amber, ringing:** needs you. **Green:** finished, not looked at yet.
   **Grey:** idle.
-- **Point at a dot** and it grows and shows its card: the session's name, its state, how long it has been
+- **Rest the pointer on a dot** and it shows its card: the session's name, its state, how long it has been
   in it, its workspace, and the last thing the agent said.
+- **Click a dot** and its card stays open with everything the agent said, until you click anywhere else
+  (or press Escape).
 - **When an agent asks something**, its card opens by itself beside its dot, with the question.
 - **Answer from the card:** type in it and press Return. The message goes through `cmux agent message`,
   which hands it to the agent through its hooks and never types into its terminal.
-- **Click a dot** (or the arrow on a card) to open that session's pane in cmux.
-- **Click anywhere else** and whatever is open closes.
+- **The arrow on a card** opens that session's pane in cmux.
 - **Right-click the strip:** move it to the other edge, open at login, quit.
 
 The glass is the system's own (macOS 26 Liquid Glass), with no colour or opacity of its own: it follows

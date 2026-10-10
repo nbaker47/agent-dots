@@ -193,7 +193,7 @@ final class Store: ObservableObject {
                 if block["type"] as? String == "text", let text = block["text"] as? String,
                     !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 {
-                    return String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(900))
+                    return String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(8000))
                 }
             }
         }

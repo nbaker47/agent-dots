@@ -6,11 +6,38 @@ extension Notification.Name {
     static let clickedAway = Notification.Name("AgentDots.clickedAway")
 }
 
+/// What the strip has open. The pointer is followed by the app itself (`AppDelegate.follow`), not by the views:
+/// the window never changes size or place, so nothing jumps when the pointer arrives.
+@MainActor
+final class Open: ObservableObject {
+    @Published var pointed: String?  // the dot under the pointer: it grows at once
+    @Published var hovered: String?  // the dot the pointer has rested on: its card shows
+    @Published var pinned: String?  // the dot that was clicked: its card stays, in full, until a click away
+    @Published var typingIn: String?  // the card being written in stays open
+    @Published var dismissed: Set<String> = []  // "needs you" cards closed by a click away, until they change
+    var cards: [CGRect] = []  // where the cards are in the window, for telling whether the pointer is on one
+
+    func closeAll(waiting: [String]) {
+        pointed = nil
+        hovered = nil
+        pinned = nil
+        typingIn = nil
+        dismissed.formUnion(waiting)
+    }
+}
+
+struct CardRects: PreferenceKey {
+    static let defaultValue: [CGRect] = []
+    static func reduce(value: inout [CGRect], nextValue: () -> [CGRect]) { value += nextValue() }
+}
+
 /// A dot for one session: blue and breathing while it works, amber and ringing when it needs a person,
-/// green when it has finished and nobody has looked yet, faint when it is idle. It grows under the pointer.
+/// green when it has finished and nobody has looked yet, faint when it is idle. A little larger under the
+/// pointer, and ringed when its card is pinned.
 struct Dot: View {
     let state: AgentState
     var big = false
+    var pinned = false
     @State private var breathe = false
     private let size: CGFloat = 11
 
@@ -18,15 +45,15 @@ struct Dot: View {
         ZStack {
             if state == .waiting {
                 Circle().stroke(state.color.opacity(breathe ? 0 : 0.8), lineWidth: 1.5)
-                    .frame(width: size, height: size).scaleEffect(breathe ? 2.2 : 1)
+                    .frame(width: size, height: size).scaleEffect(breathe ? 2.0 : 1)
             }
             Circle().fill(state.color)
                 .frame(width: size, height: size)
-                .opacity(state == .running ? (breathe ? 1 : 0.5) : 1)
-                .shadow(color: state == .ready ? .clear : state.color.opacity(0.8), radius: state == .waiting ? 6 : 4)
+                .opacity(state == .running ? (breathe ? 1 : 0.55) : 1)
+            if pinned { Circle().stroke(.primary.opacity(0.7), lineWidth: 1.5).frame(width: size + 6, height: size + 6) }
         }
-        .scaleEffect(big ? 1.7 : 1)
-        .animation(.spring(duration: 0.25, bounce: 0.45), value: big)
+        .scaleEffect(big ? 1.25 : 1)
+        .animation(.easeOut(duration: 0.12), value: big)
         .frame(width: Strip.row, height: Strip.row)
         .contentShape(Rectangle())
         .onAppear { animate() }
@@ -36,20 +63,27 @@ struct Dot: View {
     private func animate() {
         breathe = false
         guard state == .running || state == .waiting else { return }
-        withAnimation(.easeInOut(duration: state == .waiting ? 1.1 : 1.6).repeatForever(autoreverses: state == .running)) {
+        withAnimation(.easeInOut(duration: state == .waiting ? 1.3 : 1.8).repeatForever(autoreverses: state == .running)) {
             breathe = true
         }
     }
 }
 
 /// What is shown beside a dot: who it is, what it is doing, the last thing it said (its question, when it
-/// stopped on one), and a line to answer it with.
+/// stopped on one), and a line to answer it with. Pinned, it shows all of what was said.
 struct Card: View {
     let session: AgentSession
+    let full: Bool
     @ObservedObject var store: Store
-    let typing: (Bool) -> Void
+    @ObservedObject var open: Open
     @State private var text = ""
     @FocusState private var focused: Bool
+
+    /// The agent writes Markdown: bold and code are shown as such, line breaks kept.
+    static func rich(_ text: String) -> AttributedString {
+        let keep = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        return (try? AttributedString(markdown: text, options: keep)) ?? AttributedString(text)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -69,15 +103,24 @@ struct Card: View {
             }
             .font(.system(size: 11)).foregroundStyle(.secondary)
             if let said = store.said[session.id] {
-                Text(said).font(.system(size: 12)).lineLimit(7).fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                if full {
+                    ScrollView {
+                        Text(Card.rich(said)).font(.system(size: 12)).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: Strip.fullText)
+                    .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text(Card.rich(said)).font(.system(size: 12)).lineLimit(4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
             TextField(session.state == .waiting ? "Answer…" : "Message…", text: $text)
                 .textFieldStyle(.plain).font(.system(size: 12))
                 .padding(.horizontal, 10).padding(.vertical, 6)
                 .background(.quaternary, in: Capsule())
                 .focused($focused)
-                .onChange(of: focused) { typing(focused) }
+                .onChange(of: focused) { open.typingIn = focused ? session.id : (open.typingIn == session.id ? nil : open.typingIn) }
                 .onSubmit {
                     store.send(text, to: session)
                     text = ""
@@ -85,64 +128,61 @@ struct Card: View {
                 }
         }
         .padding(12)
-        .frame(width: 300, alignment: .leading)
+        .frame(width: Strip.cardWidth, alignment: .leading)
         .glassEffect(.regular, in: .rect(cornerRadius: 20))
+        .background(GeometryReader { g in Color.clear.preference(key: CardRects.self, value: [g.frame(in: .named("strip"))]) })
         .onReceive(NotificationCenter.default.publisher(for: .clickedAway)) { _ in focused = false }
     }
 }
 
-/// The strip on the edge of the screen: a glass capsule of dots. A dot under the pointer grows and shows its
-/// card; a session that needs a person shows its card by itself, with what it asked. A click anywhere else
-/// closes whatever is open.
+/// The strip on the edge of the screen: a glass capsule of dots. A dot the pointer rests on shows its card; a
+/// clicked dot keeps its card open, in full, until a click anywhere else; a session that needs a person shows
+/// its card by itself, with what it asked.
 struct Strip: View {
     static let row: CGFloat = 23
-    static let cardHeight: CGFloat = 230
+    static let inset: CGFloat = 6  // between the strip and the edge of the screen
+    static let capsulePad: CGFloat = 8
+    static let cardWidth: CGFloat = 300
+    static let fullText: CGFloat = 300  // the most of the screen a pinned card's text takes before it scrolls
+    static let width: CGFloat = inset + row + 6 + 10 + cardWidth + 8
+    static func height(count: Int) -> CGFloat { max(CGFloat(max(count, 1)) * row + 2 * capsulePad + 300, 560) }
 
     @ObservedObject var store: Store
+    @ObservedObject var open: Open
     @AppStorage("edge") var edge = "right"
-    @State private var hovered: String?  // the dot, or its card, under the pointer
-    @State private var typingIn: String?  // the card being written in stays open
-    @State private var dismissed: Set<String> = []  // "needs you" cards closed by a click away, until they change
-    let resize: (_ open: Bool, _ count: Int) -> Void
+    @State private var cardHeight: CGFloat = 120
 
-    private func key(_ s: AgentSession) -> String { "\(s.id)@\(s.since.timeIntervalSince1970)" }
+    static func key(_ s: AgentSession) -> String { "\(s.id)@\(s.since.timeIntervalSince1970)" }
 
-    /// The cards to show: the one being written in or pointed at; otherwise every session that needs a person.
+    /// The cards to show: the pinned one; else the one being written in or rested on; else every session that
+    /// needs a person.
     private var shown: [AgentSession] {
-        if let id = typingIn ?? hovered, let s = store.sessions.first(where: { $0.id == id }) { return [s] }
-        return store.sessions.filter { $0.state == .waiting && !dismissed.contains(key($0)) }
+        if let id = open.pinned ?? open.typingIn ?? open.hovered, let s = store.sessions.first(where: { $0.id == id }) {
+            return [s]
+        }
+        return store.sessions.filter { $0.state == .waiting && !open.dismissed.contains(Strip.key($0)) }
     }
 
     var body: some View {
         let onRight = edge == "right"
         let cards = shown
-        GlassEffectContainer(spacing: 12) {
-            HStack(alignment: .center, spacing: 10) {
-                if !onRight { capsule }
-                if !cards.isEmpty { column(cards, onRight: onRight) }
-                if onRight { capsule }
-            }
+        HStack(alignment: .center, spacing: 10) {
+            if !onRight { capsule }
+            if !cards.isEmpty { column(cards) }
+            if onRight { capsule }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: onRight ? .trailing : .leading)
-        .padding(.horizontal, 6)
-        .animation(.spring(duration: 0.25), value: cards.map(\.id))
-        .onChange(of: cards.isEmpty) { resize(!cards.isEmpty, store.sessions.count) }
-        .onChange(of: store.sessions.count) { resize(!cards.isEmpty, store.sessions.count) }
-        .onChange(of: edge) { resize(!cards.isEmpty, store.sessions.count) }
-        .onAppear {
-            resize(!cards.isEmpty, store.sessions.count)
-            // AGENTDOTS_SHOW=<n> opens the nth dot's card after a few seconds, for looking at it without a pointer
-            if let n = Int(ProcessInfo.processInfo.environment["AGENTDOTS_SHOW"] ?? "") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
-                    if store.sessions.indices.contains(n) { hovered = store.sessions[n].id }
-                }
-            }
+        .padding(.horizontal, Strip.inset)
+        .coordinateSpace(name: "strip")
+        .onPreferenceChange(CardRects.self) { rects in
+            open.cards = rects
+            if let h = rects.first?.height, rects.count == 1, abs(h - cardHeight) > 1 { cardHeight = h }
         }
+        .animation(.easeOut(duration: 0.12), value: cards.isEmpty)  // a short fade, and nothing else moves
         .onReceive(NotificationCenter.default.publisher(for: .clickedAway)) { _ in
-            hovered = nil
-            typingIn = nil
-            dismissed.formUnion(store.sessions.filter { $0.state == .waiting }.map(key))
+            open.closeAll(waiting: store.sessions.filter { $0.state == .waiting }.map(Strip.key))
         }
+        .onExitCommand { open.closeAll(waiting: []) }
         .contextMenu {
             Button(onRight ? "Move to the left edge" : "Move to the right edge") { edge = onRight ? "left" : "right" }
             Toggle("Open at login", isOn: Binding(
@@ -159,44 +199,31 @@ struct Strip: View {
                 Dot(state: .ready)
             } else {
                 ForEach(store.sessions) { s in
-                    Dot(state: s.state, big: hovered == s.id)
-                        .onHover { inside in point(inside, at: s.id) }
-                        .onTapGesture { store.jump(to: s) }
+                    Dot(state: s.state, big: open.pointed == s.id || open.pinned == s.id, pinned: open.pinned == s.id)
+                        .onTapGesture { open.pinned = open.pinned == s.id ? nil : s.id }
                 }
             }
         }
-        .padding(.vertical, 8).padding(.horizontal, 3)
-        .glassEffect(.regular.interactive(), in: .capsule)
+        .padding(.vertical, Strip.capsulePad).padding(.horizontal, 3)
+        .glassEffect(.regular, in: .capsule)
     }
 
-    /// One card sits level with its dot; several (more than one session asking) stack beside the strip.
-    @ViewBuilder
-    private func column(_ cards: [AgentSession], onRight: Bool) -> some View {
-        let n = CGFloat(store.sessions.count)
+    /// One card sits level with its dot (kept inside the window); several stack beside the strip.
+    private func column(_ cards: [AgentSession]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(cards) { s in
-                Card(session: s, store: store) { on in typingIn = on ? s.id : (typingIn == s.id ? nil : typingIn) }
-                    .onHover { inside in point(inside, at: s.id) }
+                Card(session: s, full: open.pinned == s.id, store: store, open: open)
             }
         }
-        .offset(y: cards.count == 1 ? level(of: cards[0], among: n) : 0)
-        .transition(.opacity.combined(with: .scale(scale: 0.94, anchor: onRight ? .trailing : .leading)))
+        .offset(y: cards.count == 1 ? level(of: cards[0]) : 0)
+        .transition(.opacity)
     }
 
-    private func level(of s: AgentSession, among n: CGFloat) -> CGFloat {
+    private func level(of s: AgentSession) -> CGFloat {
         guard let at = store.sessions.firstIndex(of: s) else { return 0 }
+        let n = CGFloat(store.sessions.count)
         let wanted = (CGFloat(at) - (n - 1) / 2) * Strip.row
-        let room = Strip.cardHeight / 2 - 40  // the window is this much taller than the strip, above and below
-        return min(max(wanted, -(n * Strip.row / 2 + room - 100)), n * Strip.row / 2 + room - 100)
-    }
-
-    /// The pointer came over a dot or its card, or left it. Leaving waits a moment, so the pointer can cross
-    /// from the dot to the card without the card going.
-    private func point(_ inside: Bool, at id: String) {
-        if inside {
-            hovered = id
-        } else {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { if hovered == id { hovered = nil } }
-        }
+        let room = max(0, Strip.height(count: store.sessions.count) / 2 - cardHeight / 2 - 6)
+        return min(max(wanted, -room), room)
     }
 }
