@@ -25,7 +25,8 @@ The pictures use made-up sessions on a plain backdrop (`AGENTDOTS_DEMO=hover|pin
 - **Right-click the strip:** move it to the other edge, open at login, quit.
 
 The glass is the system's own (macOS 26 Liquid Glass), with no colour or opacity of its own: it follows
-light and dark, the Clear or Tinted glass setting, and Reduce Transparency.
+light and dark, the Clear or Tinted glass setting, and Reduce Transparency. It turns light over a light window
+and dark over a dark one by itself, within half a second, without waiting for the pointer.
 
 ## What it reads
 

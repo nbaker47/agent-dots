@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var panel: FloatingPanel!
     private var restedOn: (id: String, since: Date)?
     private var leftAt: Date?
+    private var beat = 0
 
     func applicationDidFinishLaunching(_ note: Notification) {
         panel = FloatingPanel(
@@ -79,6 +80,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// under it, and a card that was only being looked at goes after a moment.
     private func follow() {
         place()
+        beat += 1
+        if beat % 15 == 0 { open.tick.toggle() }  // twice a second the glass looks at what is behind it (`Strip.glass`)
         if Store.demo != nil { return }  // the pictures are posed, not pointed at
         let frame = panel.frame
         let at = NSEvent.mouseLocation

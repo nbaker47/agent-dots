@@ -15,6 +15,7 @@ final class Open: ObservableObject {
     @Published var pinned: String?  // the dot that was clicked: its card stays, in full, until a click away
     @Published var typingIn: String?  // the card being written in stays open
     @Published var dismissed: Set<String> = []  // "needs you" cards closed by a click away, until they change
+    @Published var tick = false  // flipped twice a second: see `Strip.glass`
     var cards: [CGRect] = []  // where the cards are in the window, for telling whether the pointer is on one
 
     func closeAll(waiting: [String]) {
@@ -129,7 +130,7 @@ struct Card: View {
         }
         .padding(12)
         .frame(width: Strip.cardWidth, alignment: .leading)
-        .glassEffect(.regular, in: .rect(cornerRadius: 20))
+        .glassEffect(Strip.glass(open.tick), in: .rect(cornerRadius: 20))
         .background(GeometryReader { g in Color.clear.preference(key: CardRects.self, value: [g.frame(in: .named("strip"))]) })
         .onReceive(NotificationCenter.default.publisher(for: .clickedAway)) { _ in focused = false }
     }
@@ -156,6 +157,11 @@ struct Strip: View {
     @ObservedObject var open: Open
     @AppStorage("edge") var edge = "right"
     @State private var cardHeight: CGFloat = 120
+
+    /// The system's glass, told apart by a tint nobody can see. Glass picks light or dark from what is behind it
+    /// only when it is drawn again, and a strip nobody touches is never drawn again: it stayed light over a
+    /// window that had turned dark until the pointer came. Flipping this makes it look again by itself.
+    static func glass(_ tick: Bool) -> Glass { .regular.tint(Color.gray.opacity(tick ? 0.004 : 0.008)) }
 
     static func key(_ s: AgentSession) -> String { "\(s.id)@\(s.since.timeIntervalSince1970)" }
 
@@ -217,7 +223,7 @@ struct Strip: View {
             }
         }
         .padding(.vertical, Strip.capsulePad).padding(.horizontal, 3)
-        .glassEffect(.regular, in: .capsule)
+        .glassEffect(Strip.glass(open.tick), in: .capsule)
     }
 
     /// One card sits with its middle level with its dot (kept inside the window); several stack beside the strip.
@@ -241,7 +247,7 @@ struct Strip: View {
             if cards.count == 1 {
                 Color.clear
                     .frame(width: Strip.gap + 16, height: Strip.neck)
-                    .glassEffect(.regular, in: .capsule)
+                    .glassEffect(Strip.glass(open.tick), in: .capsule)
                     .offset(y: dotLevel(of: cards[0]))
                     .transition(.scale(scale: 0.02, anchor: onRight ? .trailing : .leading).combined(with: .opacity))
             }
