@@ -64,7 +64,31 @@ final class Store: ObservableObject {
         return FileManager.default.isExecutableFile(atPath: bundled) ? bundled : "/usr/bin/env"
     }()
 
+    /// AGENTDOTS_DEMO=<hover|pinned|ask>: made-up sessions on a plain backdrop, for the pictures in the README.
+    /// Nothing of the real screen or the real sessions is in them.
+    static let demo = ProcessInfo.processInfo.environment["AGENTDOTS_DEMO"]
+
+    private func startDemo(_ scene: String) {
+        func s(_ n: Int, _ name: String, _ ws: String, _ state: AgentState, _ ago: TimeInterval) -> AgentSession {
+            AgentSession(id: "demo-\(n)", workspaceID: "w", name: name, workspace: ws, state: state, since: Date().addingTimeInterval(-ago))
+        }
+        sessions = [
+            s(0, "api: retry on 429", "backend", scene == "ask" ? .waiting : .done, 95),
+            s(1, "fix flaky upload test", "backend", .running, 12),
+            s(2, "landing page copy", "website", .running, 48),
+            s(3, "release notes", "website", .ready, 1500),
+            s(4, "database migration", "infra", .ready, 5400),
+        ]
+        said = [
+            "demo-0": scene == "ask"
+                ? "The retry is in, but two callers pass their own timeout. Should the retry respect it, or always wait the full back-off?"
+                : "The retry on 429 is in and **all 212 tests pass**.\n\n- **What changed:** `fetch` now waits for the `Retry-After` header, up to three tries.\n- **Not covered:** the streaming path still fails on the first 429; say if you want that too.\n- **Next:** I can open the pull request, or keep going on the streaming path first.",
+            "demo-1": "The test fails one run in six. The upload finishes before the mock server is listening; I'm moving the wait into the fixture.",
+        ]
+    }
+
     func start() {
+        if let scene = Self.demo { return startDemo(scene) }
         refreshNames()
         refreshTranscripts()
         read()

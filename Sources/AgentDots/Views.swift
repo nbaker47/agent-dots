@@ -180,6 +180,11 @@ struct Strip: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: onRight ? .trailing : .leading)
         .padding(.horizontal, Strip.inset)
+        .background {
+            if Store.demo != nil {  // a plain backdrop for the README's pictures, in place of the real screen
+                LinearGradient(colors: [Color(red: 0.16, green: 0.20, blue: 0.36), Color(red: 0.52, green: 0.30, blue: 0.42), Color(red: 0.93, green: 0.62, blue: 0.40)], startPoint: .topLeading, endPoint: .bottomTrailing)
+            }
+        }
         .coordinateSpace(name: "strip")
         .onPreferenceChange(CardRects.self) { rects in
             open.cards = rects

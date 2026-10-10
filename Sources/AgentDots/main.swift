@@ -42,7 +42,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         // a click in any other app, or on the desktop, closes whatever the strip has open
-        if ProcessInfo.processInfo.environment["AGENTDOTS_PIN"] == nil {  // (a pinned look stays for its picture)
+        if let scene = Store.demo {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                if scene == "pinned" { self?.open.pinned = "demo-0" }
+                if scene == "hover" { self?.open.pointed = "demo-1"; self?.open.hovered = "demo-1" }
+            }
+        }
+        if ProcessInfo.processInfo.environment["AGENTDOTS_PIN"] == nil, Store.demo == nil {  // (a pinned look stays for its picture)
             NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { _ in
                 NotificationCenter.default.post(name: .clickedAway, object: nil)
             }
@@ -73,6 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// under it, and a card that was only being looked at goes after a moment.
     private func follow() {
         place()
+        if Store.demo != nil { return }  // the pictures are posed, not pointed at
         let frame = panel.frame
         let at = NSEvent.mouseLocation
         let point = CGPoint(x: at.x - frame.minX, y: frame.maxY - at.y)  // in the window, from its top left

@@ -4,6 +4,12 @@ A glass strip on the edge of the screen with one dot for each agent session runn
 [cmux](https://cmux.com). It floats over every window and Space, so you can see who is working and who is
 waiting for you without switching to the terminal.
 
+| Rest the pointer on a dot | Click a dot: the whole answer stays | An agent asks: its card opens by itself |
+| --- | --- | --- |
+| ![A working session's card beside its dot](docs/hover.png) | ![A finished session's card, pinned](docs/pinned.png) | ![A session that needs an answer](docs/ask.png) |
+
+The pictures use made-up sessions on a plain backdrop (`AGENTDOTS_DEMO=hover|pinned|ask`).
+
 - **Blue, breathing:** working. **Amber, ringing:** needs you. **Green:** finished, not looked at yet.
   **Grey:** idle.
 - **Rest the pointer on a dot** and it shows its card: the session's name, its state, how long it has been
