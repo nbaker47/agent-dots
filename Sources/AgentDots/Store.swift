@@ -15,12 +15,13 @@ enum AgentState: String {
         }
     }
 
+    /// The system's own colours, so they follow light and dark and the contrast settings.
     var color: Color {
         switch self {
-        case .running: Color(red: 0.30, green: 0.62, blue: 1.0)
-        case .waiting: Color(red: 1.0, green: 0.66, blue: 0.20)
-        case .done: Color(red: 0.25, green: 0.86, blue: 0.50)
-        case .ready: Color(white: 0.62).opacity(0.75)
+        case .running: Color(nsColor: .systemBlue)
+        case .waiting: Color(nsColor: .systemOrange)
+        case .done: Color(nsColor: .systemGreen)
+        case .ready: Color(nsColor: .tertiaryLabelColor)
         }
     }
 
@@ -48,6 +49,10 @@ struct AgentSession: Identifiable, Equatable {
 final class Store: ObservableObject {
     @Published var sessions: [AgentSession] = []
     @Published var sent: String?  // the pane a message was just sent to, for a tick in its row
+    @Published var said: [String: String] = [:]  // pane -> the last thing its agent said (or asked)
+
+    private var transcripts: [String: URL] = [:]  // pane -> its Claude Code transcript
+    private var readAt: [String: Date] = [:]  // pane -> the transcript's date when it was last read
 
     private let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cache/cmux-status")
     private var names: [String: String] = [:]  // uuid of a pane or a workspace -> its title
@@ -61,13 +66,16 @@ final class Store: ObservableObject {
 
     func start() {
         refreshNames()
+        refreshTranscripts()
         read()
         Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
                 self.ticks += 1
                 if self.ticks % 6 == 0 { self.refreshNames() }
+                if self.ticks % 6 == 1 { self.refreshTranscripts() }
                 self.read()
+                self.readSaid()
             }
         }
     }
@@ -120,6 +128,78 @@ final class Store: ObservableObject {
         }
     }
 
+    /// Which transcript belongs to which pane. Claude Code lists its sessions (`claude agents --json`: pid and
+    /// session id); a session's process carries its pane's id in `CMUX_PANEL_ID`; the transcript is the file
+    /// named after the session id under `~/.claude/projects/`.
+    private func refreshTranscripts() {
+        Task.detached {
+            guard let out = Self.shell("/bin/zsh", ["-lc", "claude agents --json"]),
+                let list = try? JSONSerialization.jsonObject(with: Data(out.utf8)) as? [[String: Any]]
+            else { return }
+            let projects = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects")
+            let folders = (try? FileManager.default.contentsOfDirectory(at: projects, includingPropertiesForKeys: nil)) ?? []
+            let paneID = try! NSRegularExpression(pattern: "CMUX_PANEL_ID=([0-9A-Fa-f-]{36})")
+            var found: [String: URL] = [:]
+            for item in list {
+                guard let pid = item["pid"] as? Int, let session = item["sessionId"] as? String,
+                    let env = Self.shell("/bin/ps", ["eww", "-o", "command=", "-p", String(pid)]),
+                    let m = paneID.firstMatch(in: env, range: NSRange(env.startIndex..., in: env))
+                else { continue }
+                let pane = String(env[Range(m.range(at: 1), in: env)!]).uppercased()
+                if let file = folders.map({ $0.appendingPathComponent("\(session).jsonl") })
+                    .first(where: { FileManager.default.fileExists(atPath: $0.path) })
+                {
+                    found[pane] = file
+                }
+            }
+            let result = found
+            await MainActor.run { self.transcripts = result }
+        }
+    }
+
+    /// The last thing each agent said, read from the end of its transcript when the file has changed: its last
+    /// words, or the question it is asking when it stopped on one.
+    private func readSaid() {
+        for (pane, file) in transcripts {
+            guard let changed = try? FileManager.default.attributesOfItem(atPath: file.path)[.modificationDate] as? Date,
+                readAt[pane] != changed
+            else { continue }
+            readAt[pane] = changed
+            Task.detached {
+                guard let text = Self.lastSaid(in: file) else { return }
+                await MainActor.run { if self.said[pane] != text { self.said[pane] = text } }
+            }
+        }
+    }
+
+    nonisolated static func lastSaid(in file: URL) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        try? handle.seek(toOffset: size > 400_000 ? size - 400_000 : 0)
+        guard let data = try? handle.readToEnd(), let tail = String(data: data, encoding: .utf8) else { return nil }
+        for line in tail.split(separator: "\n").reversed() {
+            guard let row = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                row["type"] as? String == "assistant", row["isSidechain"] as? Bool != true,
+                let message = row["message"] as? [String: Any], let content = message["content"] as? [[String: Any]]
+            else { continue }
+            for block in content.reversed() {
+                if block["type"] as? String == "tool_use", block["name"] as? String == "AskUserQuestion",
+                    let input = block["input"] as? [String: Any], let questions = input["questions"] as? [[String: Any]],
+                    let question = questions.first?["question"] as? String
+                {
+                    return question
+                }
+                if block["type"] as? String == "text", let text = block["text"] as? String,
+                    !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                {
+                    return String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(900))
+                }
+            }
+        }
+        return nil
+    }
+
     /// Bring cmux forward on this session's pane. A finished session counts as seen from then on.
     func jump(to s: AgentSession) {
         Task.detached {
@@ -146,7 +226,7 @@ final class Store: ObservableObject {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         Task.detached {
-            let ok = Self.run(["agent", "message", s.id, "--from", "Nathan", "--", text]) != nil
+            let ok = Self.run(["agent", "message", s.id, "--from", NSFullUserName(), "--", text]) != nil
             await MainActor.run {
                 self.sent = ok ? s.id : nil
                 Task { @MainActor in
@@ -157,16 +237,20 @@ final class Store: ObservableObject {
         }
     }
 
-    /// Run the cmux command; its output, or nil when it failed or took more than five seconds.
+    /// Run the cmux command; its output, or nil when it failed or took more than twelve seconds.
     nonisolated static func run(_ args: [String]) -> String? {
+        shell(cmux, cmux.hasSuffix("env") ? ["cmux"] + args : args)
+    }
+
+    nonisolated static func shell(_ tool: String, _ args: [String]) -> String? {
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: cmux)
-        p.arguments = cmux.hasSuffix("env") ? ["cmux"] + args : args
+        p.executableURL = URL(fileURLWithPath: tool)
+        p.arguments = args
         let pipe = Pipe()
         p.standardOutput = pipe
         p.standardError = Pipe()
         do { try p.run() } catch { return nil }
-        let deadline = DispatchTime.now() + 5
+        let deadline = DispatchTime.now() + 12
         DispatchQueue.global().asyncAfter(deadline: deadline) { if p.isRunning { p.terminate() } }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()

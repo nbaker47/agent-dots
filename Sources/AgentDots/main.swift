@@ -26,10 +26,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.isFloatingPanel = true
         panel.becomesKeyOnlyIfNeeded = true
         let view = Strip(store: store) { [weak self] open, count in self?.place(open: open, count: count) }
-        panel.contentView = NSHostingView(rootView: view.preferredColorScheme(.dark))
+        panel.contentView = NSHostingView(rootView: view)  // no fixed look: the glass and the text follow the system
         place(open: false, count: 0)
         panel.orderFrontRegardless()
         store.start()
+        // a click in any other app, or on the desktop, closes whatever the strip has open
+        NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { _ in
+            NotificationCenter.default.post(name: .clickedAway, object: nil)
+        }
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in Task { @MainActor in self?.place(open: false, count: self?.store.sessions.count ?? 0) } }
@@ -41,10 +45,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let screen = NSScreen.main else { return }
         let area = screen.visibleFrame
         let rows = CGFloat(max(count, 1))
-        let closed = rows * 23 + 26
-        let opened = rows * 50 + 96
-        let height = min(max(open ? max(opened, closed) : closed, 60), area.height - 40)
-        let width: CGFloat = open ? 360 : 44
+        let closed = rows * Strip.row + 16
+        // open: room for a card level with the first or the last dot, and for a stack of cards
+        let height = min(open ? max(closed + Strip.cardHeight, 2 * Strip.cardHeight) : closed, area.height - 20)
+        let width: CGFloat = open ? 372 : 41
         let onRight = (UserDefaults.standard.string(forKey: "edge") ?? "right") == "right"
         let x = onRight ? area.maxX - width : area.minX
         let y = area.midY - height / 2

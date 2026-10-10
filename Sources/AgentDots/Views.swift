@@ -1,12 +1,18 @@
 import ServiceManagement
 import SwiftUI
 
+extension Notification.Name {
+    /// A click landed somewhere that is not the strip: whatever is open closes.
+    static let clickedAway = Notification.Name("AgentDots.clickedAway")
+}
+
 /// A dot for one session: blue and breathing while it works, amber and ringing when it needs a person,
-/// green when it has finished and nobody has looked yet, faint when it is idle.
+/// green when it has finished and nobody has looked yet, faint when it is idle. It grows under the pointer.
 struct Dot: View {
     let state: AgentState
-    var size: CGFloat = 11
+    var big = false
     @State private var breathe = false
+    private let size: CGFloat = 11
 
     var body: some View {
         ZStack {
@@ -16,10 +22,13 @@ struct Dot: View {
             }
             Circle().fill(state.color)
                 .frame(width: size, height: size)
-                .opacity(state == .running ? (breathe ? 1 : 0.45) : 1)
-                .shadow(color: state == .ready ? .clear : state.color.opacity(0.9), radius: state == .waiting ? 6 : 4)
+                .opacity(state == .running ? (breathe ? 1 : 0.5) : 1)
+                .shadow(color: state == .ready ? .clear : state.color.opacity(0.8), radius: state == .waiting ? 6 : 4)
         }
-        .frame(width: size + 10, height: size + 10)
+        .scaleEffect(big ? 1.7 : 1)
+        .animation(.spring(duration: 0.25, bounce: 0.45), value: big)
+        .frame(width: Strip.row, height: Strip.row)
+        .contentShape(Rectangle())
         .onAppear { animate() }
         .onChange(of: state) { animate() }
     }
@@ -33,102 +42,106 @@ struct Dot: View {
     }
 }
 
-struct Row: View {
+/// What is shown beside a dot: who it is, what it is doing, the last thing it said (its question, when it
+/// stopped on one), and a line to answer it with.
+struct Card: View {
     let session: AgentSession
     @ObservedObject var store: Store
-    @Binding var writingTo: String?
+    let typing: (Bool) -> Void
     @State private var text = ""
-    @State private var over = false
-    @FocusState private var typing: Bool
+    @FocusState private var focused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Dot(state: session.state)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(session.name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
-                    HStack(spacing: 4) {
-                        Text(session.state.label).foregroundStyle(session.state == .ready ? .secondary : session.state.color)
-                        Text("·")
-                        Text(session.since, style: .relative)
-                        if !session.workspace.isEmpty { Text("· \(session.workspace)").lineLimit(1) }
-                    }
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 4)
-                if store.sent == session.id {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                }
-                Button {
-                    writingTo = writingTo == session.id ? nil : session.id
-                    typing = writingTo == session.id
-                } label: {
-                    Image(systemName: "bubble.left.fill").font(.system(size: 11))
-                }
-                .buttonStyle(.plain).foregroundStyle(writingTo == session.id ? .primary : .tertiary)
-                .help("Send this agent a message")
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 7) {
+                Circle().fill(session.state.color).frame(width: 8, height: 8)
+                Text(session.name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                Spacer(minLength: 6)
+                if store.sent == session.id { Image(systemName: "checkmark.circle.fill").foregroundStyle(.green) }
+                Button { store.jump(to: session) } label: { Image(systemName: "arrow.up.forward.app") }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).help("Open \(session.name) in cmux")
             }
-            if writingTo == session.id {
-                TextField("Message \(session.name)…", text: $text)
-                    .textFieldStyle(.plain).font(.system(size: 12))
-                    .padding(.horizontal, 10).padding(.vertical, 6)
-                    .background(.white.opacity(0.10), in: Capsule())
-                    .focused($typing)
-                    .onSubmit {
-                        store.send(text, to: session)
-                        text = ""
-                        writingTo = nil
-                    }
-                    .onAppear { typing = true }
+            HStack(spacing: 4) {
+                Text(session.state.label).foregroundStyle(session.state == .ready ? AnyShapeStyle(.secondary) : AnyShapeStyle(session.state.color))
+                Text("·")
+                Text(session.since, style: .relative)
+                if !session.workspace.isEmpty { Text("· \(session.workspace)").lineLimit(1) }
             }
+            .font(.system(size: 11)).foregroundStyle(.secondary)
+            if let said = store.said[session.id] {
+                Text(said).font(.system(size: 12)).lineLimit(7).fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            TextField(session.state == .waiting ? "Answer…" : "Message…", text: $text)
+                .textFieldStyle(.plain).font(.system(size: 12))
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .background(.quaternary, in: Capsule())
+                .focused($focused)
+                .onChange(of: focused) { typing(focused) }
+                .onSubmit {
+                    store.send(text, to: session)
+                    text = ""
+                    focused = false
+                }
         }
-        .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(over ? Color.white.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 12))
-        .contentShape(RoundedRectangle(cornerRadius: 12))
-        .onHover { over = $0 }
-        .onTapGesture { store.jump(to: session) }
-        .help("Open \(session.name) in cmux")
+        .padding(12)
+        .frame(width: 300, alignment: .leading)
+        .glassEffect(.regular, in: .rect(cornerRadius: 20))
+        .onReceive(NotificationCenter.default.publisher(for: .clickedAway)) { _ in focused = false }
     }
 }
 
-/// The strip on the edge of the screen: a glass capsule of dots, which opens into the list when the pointer
-/// is over it and closes again when it leaves (unless a message is being written).
+/// The strip on the edge of the screen: a glass capsule of dots. A dot under the pointer grows and shows its
+/// card; a session that needs a person shows its card by itself, with what it asked. A click anywhere else
+/// closes whatever is open.
 struct Strip: View {
+    static let row: CGFloat = 23
+    static let cardHeight: CGFloat = 230
+
     @ObservedObject var store: Store
     @AppStorage("edge") var edge = "right"
-    @State private var open = false
-    @State private var writingTo: String?
+    @State private var hovered: String?  // the dot, or its card, under the pointer
+    @State private var typingIn: String?  // the card being written in stays open
+    @State private var dismissed: Set<String> = []  // "needs you" cards closed by a click away, until they change
     let resize: (_ open: Bool, _ count: Int) -> Void
+
+    private func key(_ s: AgentSession) -> String { "\(s.id)@\(s.since.timeIntervalSince1970)" }
+
+    /// The cards to show: the one being written in or pointed at; otherwise every session that needs a person.
+    private var shown: [AgentSession] {
+        if let id = typingIn ?? hovered, let s = store.sessions.first(where: { $0.id == id }) { return [s] }
+        return store.sessions.filter { $0.state == .waiting && !dismissed.contains(key($0)) }
+    }
 
     var body: some View {
         let onRight = edge == "right"
-        GlassEffectContainer(spacing: 10) {
+        let cards = shown
+        GlassEffectContainer(spacing: 12) {
             HStack(alignment: .center, spacing: 10) {
                 if !onRight { capsule }
-                if open { list.transition(.opacity.combined(with: .scale(scale: 0.96, anchor: onRight ? .trailing : .leading))) }
+                if !cards.isEmpty { column(cards, onRight: onRight) }
                 if onRight { capsule }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: onRight ? .trailing : .leading)
         .padding(.horizontal, 6)
-        .contentShape(Rectangle())
-        .onHover { inside in
-            if inside {
-                resize(true, store.sessions.count)
-                withAnimation(.spring(duration: 0.28)) { open = true }
-            } else if writingTo == nil {
-                withAnimation(.easeOut(duration: 0.18)) { open = false }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { if !open { resize(false, store.sessions.count) } }
+        .animation(.spring(duration: 0.25), value: cards.map(\.id))
+        .onChange(of: cards.isEmpty) { resize(!cards.isEmpty, store.sessions.count) }
+        .onChange(of: store.sessions.count) { resize(!cards.isEmpty, store.sessions.count) }
+        .onChange(of: edge) { resize(!cards.isEmpty, store.sessions.count) }
+        .onAppear {
+            resize(!cards.isEmpty, store.sessions.count)
+            // AGENTDOTS_SHOW=<n> opens the nth dot's card after a few seconds, for looking at it without a pointer
+            if let n = Int(ProcessInfo.processInfo.environment["AGENTDOTS_SHOW"] ?? "") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                    if store.sessions.indices.contains(n) { hovered = store.sessions[n].id }
+                }
             }
         }
-        .onChange(of: store.sessions.count) { resize(open, store.sessions.count) }
-        .onChange(of: edge) { resize(open, store.sessions.count) }
-        .onAppear {
-            // AGENTDOTS_OPEN=1 starts with the list open, for looking at it without a pointer over it
-            let pinned = ProcessInfo.processInfo.environment["AGENTDOTS_OPEN"] == "1"
-            open = pinned
-            resize(pinned, store.sessions.count)
-            if pinned { DispatchQueue.main.asyncAfter(deadline: .now() + 2) { resize(true, store.sessions.count) } }
+        .onReceive(NotificationCenter.default.publisher(for: .clickedAway)) { _ in
+            hovered = nil
+            typingIn = nil
+            dismissed.formUnion(store.sessions.filter { $0.state == .waiting }.map(key))
         }
         .contextMenu {
             Button(onRight ? "Move to the left edge" : "Move to the right edge") { edge = onRight ? "left" : "right" }
@@ -141,37 +154,49 @@ struct Strip: View {
     }
 
     private var capsule: some View {
-        VStack(spacing: 2) {
+        VStack(spacing: 0) {
             if store.sessions.isEmpty {
                 Dot(state: .ready)
             } else {
                 ForEach(store.sessions) { s in
-                    Dot(state: s.state).onTapGesture { store.jump(to: s) }.help("\(s.name): \(s.state.label)")
+                    Dot(state: s.state, big: hovered == s.id)
+                        .onHover { inside in point(inside, at: s.id) }
+                        .onTapGesture { store.jump(to: s) }
                 }
             }
         }
-        .padding(.vertical, 9).padding(.horizontal, 5)
+        .padding(.vertical, 8).padding(.horizontal, 3)
         .glassEffect(.regular.interactive(), in: .capsule)
     }
 
-    private var list: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            let needs = store.sessions.filter { $0.state == .waiting || $0.state == .done }.count
-            HStack {
-                Text("Agents").font(.system(size: 12, weight: .bold))
-                Spacer()
-                Text(needs == 0 ? "\(store.sessions.count) open" : "\(needs) for you")
-                    .font(.system(size: 11)).foregroundStyle(needs == 0 ? .secondary : AgentState.waiting.color)
+    /// One card sits level with its dot; several (more than one session asking) stack beside the strip.
+    @ViewBuilder
+    private func column(_ cards: [AgentSession], onRight: Bool) -> some View {
+        let n = CGFloat(store.sessions.count)
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(cards) { s in
+                Card(session: s, store: store) { on in typingIn = on ? s.id : (typingIn == s.id ? nil : typingIn) }
+                    .onHover { inside in point(inside, at: s.id) }
             }
-            .padding(.horizontal, 10).padding(.top, 4).padding(.bottom, 2)
-            if store.sessions.isEmpty {
-                Text("No agent sessions in cmux right now.").font(.system(size: 12)).foregroundStyle(.secondary).padding(10)
-            }
-            ForEach(store.sessions) { s in Row(session: s, store: store, writingTo: $writingTo) }
         }
-        .padding(8)
-        .frame(width: 290)
-        .glassEffect(.regular, in: .rect(cornerRadius: 22))
-        .onChange(of: writingTo) { resize(open, store.sessions.count) }
+        .offset(y: cards.count == 1 ? level(of: cards[0], among: n) : 0)
+        .transition(.opacity.combined(with: .scale(scale: 0.94, anchor: onRight ? .trailing : .leading)))
+    }
+
+    private func level(of s: AgentSession, among n: CGFloat) -> CGFloat {
+        guard let at = store.sessions.firstIndex(of: s) else { return 0 }
+        let wanted = (CGFloat(at) - (n - 1) / 2) * Strip.row
+        let room = Strip.cardHeight / 2 - 40  // the window is this much taller than the strip, above and below
+        return min(max(wanted, -(n * Strip.row / 2 + room - 100)), n * Strip.row / 2 + room - 100)
+    }
+
+    /// The pointer came over a dot or its card, or left it. Leaving waits a moment, so the pointer can cross
+    /// from the dot to the card without the card going.
+    private func point(_ inside: Bool, at id: String) {
+        if inside {
+            hovered = id
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { if hovered == id { hovered = nil } }
+        }
     }
 }
