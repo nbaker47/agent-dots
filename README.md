@@ -8,6 +8,8 @@ waiting for you without switching to the terminal.
   **Grey:** idle.
 - **Rest the pointer on a dot** and it shows its card: the session's name, its state, how long it has been
   in it, its workspace, and the last thing the agent said.
+- **A card pours out of its dot:** a neck of the same glass joins the strip to the card at the dot's level,
+  the card's middle sits level with the dot, and it slides from dot to dot as the pointer moves.
 - **Click a dot** and its card stays open with everything the agent said, until you click anywhere else
   (or press Escape).
 - **When an agent asks something**, its card opens by itself beside its dot, with the question.

@@ -82,7 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             y: (frame.height - (CGFloat(max(count, 1)) * Strip.row + 2 * Strip.capsulePad)) / 2,
             width: Strip.row + 6, height: CGFloat(max(count, 1)) * Strip.row + 2 * Strip.capsulePad)
         let onCapsule = capsule.insetBy(dx: -3, dy: 0).contains(point)
-        let onCard = open.cards.contains { $0.insetBy(dx: -8, dy: -6).contains(point) }
+        let onCard = open.cards.contains { $0.insetBy(dx: -Strip.gap, dy: -6).contains(point) }  // and the neck beside it
         let through = !(onCapsule || onCard)
         if panel.ignoresMouseEvents != through { panel.ignoresMouseEvents = through }
 

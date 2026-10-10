@@ -137,14 +137,19 @@ struct Card: View {
 
 /// The strip on the edge of the screen: a glass capsule of dots. A dot the pointer rests on shows its card; a
 /// clicked dot keeps its card open, in full, until a click anywhere else; a session that needs a person shows
-/// its card by itself, with what it asked.
+/// its card by itself, with what it asked. A single card pours out of its dot: a neck of the same glass joins
+/// the strip to the card at the dot's level, and the card grows out of that point.
 struct Strip: View {
     static let row: CGFloat = 23
     static let inset: CGFloat = 6  // between the strip and the edge of the screen
     static let capsulePad: CGFloat = 8
     static let cardWidth: CGFloat = 300
     static let fullText: CGFloat = 300  // the most of the screen a pinned card's text takes before it scrolls
-    static let width: CGFloat = inset + row + 6 + 10 + cardWidth + 8
+    static let gap: CGFloat = 16  // between the strip and a card; the neck crosses it
+    static let neck: CGFloat = 18  // how thick the neck is
+    static let blend: CGFloat = 12  // how near two pieces of glass are before the system runs them together
+    static let pour = Animation.spring(response: 0.34, dampingFraction: 0.8)
+    static let width: CGFloat = inset + row + 6 + gap + cardWidth + 8
     static func height(count: Int) -> CGFloat { max(CGFloat(max(count, 1)) * row + 2 * capsulePad + 300, 560) }
 
     @ObservedObject var store: Store
@@ -166,10 +171,12 @@ struct Strip: View {
     var body: some View {
         let onRight = edge == "right"
         let cards = shown
-        HStack(alignment: .center, spacing: 10) {
-            if !onRight { capsule }
-            if !cards.isEmpty { column(cards) }
-            if onRight { capsule }
+        GlassEffectContainer(spacing: Strip.blend) {
+            HStack(alignment: .center, spacing: 0) {
+                if !onRight { capsule; neck(cards, onRight: onRight) }
+                if !cards.isEmpty { column(cards, onRight: onRight) }
+                if onRight { neck(cards, onRight: onRight); capsule }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: onRight ? .trailing : .leading)
         .padding(.horizontal, Strip.inset)
@@ -178,7 +185,7 @@ struct Strip: View {
             open.cards = rects
             if let h = rects.first?.height, rects.count == 1, abs(h - cardHeight) > 1 { cardHeight = h }
         }
-        .animation(.easeOut(duration: 0.12), value: cards.isEmpty)  // a short fade, and nothing else moves
+        .animation(Strip.pour, value: cards.map(\.id))  // the card pours out of its dot, and slides from dot to dot
         .onReceive(NotificationCenter.default.publisher(for: .clickedAway)) { _ in
             open.closeAll(waiting: store.sessions.filter { $0.state == .waiting }.map(Strip.key))
         }
@@ -208,22 +215,43 @@ struct Strip: View {
         .glassEffect(.regular, in: .capsule)
     }
 
-    /// One card sits level with its dot (kept inside the window); several stack beside the strip.
-    private func column(_ cards: [AgentSession]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+    /// One card sits with its middle level with its dot (kept inside the window); several stack beside the strip.
+    private func column(_ cards: [AgentSession], onRight: Bool) -> some View {
+        let one = cards.count == 1 ? cards[0] : nil
+        let shift = one.map(level) ?? 0
+        // where on the card's near edge its dot is: the middle, unless the card was kept inside the window
+        let from = UnitPoint(x: onRight ? 1 : 0, y: 0.5 + ((one.map(dotLevel) ?? 0) - shift) / max(cardHeight, 1))
+        return VStack(alignment: .leading, spacing: 8) {
             ForEach(cards) { s in
                 Card(session: s, full: open.pinned == s.id, store: store, open: open)
             }
         }
-        .offset(y: cards.count == 1 ? level(of: cards[0]) : 0)
-        .transition(.opacity)
+        .offset(y: shift)
+        .transition(.scale(scale: 0.02, anchor: from).combined(with: .opacity))
+    }
+
+    /// The glass between a dot and its card: it reaches a little into both, so the three run together as one.
+    private func neck(_ cards: [AgentSession], onRight: Bool) -> some View {
+        ZStack {
+            if cards.count == 1 {
+                Color.clear
+                    .frame(width: Strip.gap + 16, height: Strip.neck)
+                    .glassEffect(.regular, in: .capsule)
+                    .offset(y: dotLevel(of: cards[0]))
+                    .transition(.scale(scale: 0.02, anchor: onRight ? .trailing : .leading).combined(with: .opacity))
+            }
+        }
+        .frame(width: Strip.gap)
+    }
+
+    /// How far a session's dot is above or below the middle of the strip.
+    private func dotLevel(of s: AgentSession) -> CGFloat {
+        guard let at = store.sessions.firstIndex(of: s) else { return 0 }
+        return (CGFloat(at) - CGFloat(store.sessions.count - 1) / 2) * Strip.row
     }
 
     private func level(of s: AgentSession) -> CGFloat {
-        guard let at = store.sessions.firstIndex(of: s) else { return 0 }
-        let n = CGFloat(store.sessions.count)
-        let wanted = (CGFloat(at) - (n - 1) / 2) * Strip.row
         let room = max(0, Strip.height(count: store.sessions.count) / 2 - cardHeight / 2 - 6)
-        return min(max(wanted, -room), room)
+        return min(max(dotLevel(of: s), -room), room)
     }
 }
