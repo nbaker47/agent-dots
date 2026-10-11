@@ -20,7 +20,10 @@ The pictures use made-up sessions on a plain backdrop (`AGENTDOTS_DEMO=hover|pin
   (or press Escape).
 - **When an agent asks something**, its card opens by itself beside its dot, with the question.
 - **Answer from the card:** type in it and press Return. The message goes through `cmux agent message`,
-  which hands it to the agent through its hooks and never types into its terminal.
+  which hands it to the agent through its hooks, and the card says what became of it: delivered, or queued
+  until the agent's turn ends. cmux can no longer wake a session that has been idle for a day, so when a
+  message to an idle session is still queued after four seconds, its pane is given a one-line prompt that
+  makes cmux hand it over (never into a half-typed prompt or an open question).
 - **The arrow on a card** opens that session's pane in cmux.
 - **Right-click the strip:** move it to the other edge, open at login, quit.
 

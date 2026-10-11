@@ -92,7 +92,6 @@ struct Card: View {
                 Circle().fill(session.state.color).frame(width: 8, height: 8)
                 Text(session.name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
                 Spacer(minLength: 6)
-                if store.sent == session.id { Image(systemName: "checkmark.circle.fill").foregroundStyle(.green) }
                 Button { store.jump(to: session) } label: { Image(systemName: "arrow.up.forward.app") }
                     .buttonStyle(.plain).foregroundStyle(.secondary).help("Open \(session.name) in cmux")
             }
@@ -127,6 +126,10 @@ struct Card: View {
                     text = ""
                     focused = false
                 }
+            if let note = store.sendNote[session.id] {
+                Label(note, systemImage: note == "Delivered" ? "checkmark.circle.fill" : note == "Sending…" ? "paperplane" : "clock")
+                    .font(.system(size: 11)).foregroundStyle(note == "Delivered" ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
+            }
         }
         .padding(12)
         .frame(width: Strip.cardWidth, alignment: .leading)
@@ -165,10 +168,10 @@ struct Strip: View {
 
     static func key(_ s: AgentSession) -> String { "\(s.id)@\(s.since.timeIntervalSince1970)" }
 
-    /// The cards to show: the pinned one; else the one being written in or rested on; else every session that
+    /// The cards to show: the pinned one; else the one being written in, just written to or rested on; else every session that
     /// needs a person.
     private var shown: [AgentSession] {
-        if let id = open.pinned ?? open.typingIn ?? open.hovered, let s = store.sessions.first(where: { $0.id == id }) {
+        if let id = open.pinned ?? open.typingIn ?? store.sent ?? open.hovered, let s = store.sessions.first(where: { $0.id == id }) {
             return [s]
         }
         return store.sessions.filter { $0.state == .waiting && !open.dismissed.contains(Strip.key($0)) }

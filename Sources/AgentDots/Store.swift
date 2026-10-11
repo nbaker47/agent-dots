@@ -48,7 +48,8 @@ struct AgentSession: Identifiable, Equatable {
 @MainActor
 final class Store: ObservableObject {
     @Published var sessions: [AgentSession] = []
-    @Published var sent: String?  // the pane a message was just sent to, for a tick in its row
+    @Published var sent: String?  // the pane a message was just sent to: its card stays open to say how it went
+    @Published var sendNote: [String: String] = [:]  // pane -> what became of the last message sent to it
     @Published var said: [String: String] = [:]  // pane -> the last thing its agent said (or asked)
 
     private var transcripts: [String: URL] = [:]  // pane -> its Claude Code transcript
@@ -245,20 +246,60 @@ final class Store: ObservableObject {
     }
 
     /// Say something to the agent in that pane. cmux hands it over through the agent's hooks, never by typing
-    /// into its terminal: an idle session wakes to read it, a busy one reads it at its next step.
+    /// the message into its terminal, and the card says what became of it.
     func send(_ text: String, to s: AgentSession) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+        sent = s.id
+        sendNote[s.id] = "Sending…"
         Task.detached {
-            let ok = Self.run(["agent", "message", s.id, "--from", NSFullUserName(), "--", text]) != nil
+            let note = Self.deliver(text, to: s)
             await MainActor.run {
-                self.sent = ok ? s.id : nil
+                self.sendNote[s.id] = note
                 Task { @MainActor in
-                    try? await Task.sleep(for: .seconds(2))
+                    try? await Task.sleep(for: .seconds(6))
+                    guard self.sendNote[s.id] == note else { return }
+                    self.sendNote[s.id] = nil
                     if self.sent == s.id { self.sent = nil }
                 }
             }
         }
+    }
+
+    /// Hand the message to cmux and follow it until the agent has it. cmux only queues a message: an idle
+    /// session is woken by a helper its last stop left waiting, and that helper is gone a day after the stop
+    /// (and for a session started before cmux had it), so a message to a long-idle session stayed queued until
+    /// somebody typed in its pane (2026-10-11). When the message is still queued after four seconds and the
+    /// session is not working, its pane is given a one-line prompt: submitting it is what makes cmux hand the
+    /// queued message over. cmux refuses that when the pane holds a half-typed prompt or an open question.
+    nonisolated static func deliver(_ text: String, to s: AgentSession) -> String {
+        guard let out = run(["agent", "message", s.id, "--from", NSFullUserName(), "--json", "--", text]),
+            let made = try? JSONSerialization.jsonObject(with: Data(out.utf8)) as? [String: Any],
+            let id = made["id"] as? String
+        else { return "Not sent: cmux did not take it" }
+        for _ in 0..<8 {
+            Thread.sleep(forTimeInterval: 0.5)
+            if !queued(id, in: s.id) { return "Delivered" }
+        }
+        if s.state == .running { return "Queued: read when this turn ends" }
+        let pane = ["--workspace", s.workspaceID, "--surface", s.id]
+        guard run(["send"] + pane + ["--paste", "--", "A message for you is waiting in cmux: read it and answer it."]) != nil
+        else { return "Queued: its pane is busy with a prompt, open it" }
+        _ = run(["send"] + pane + ["--force", "--", "\\n"])
+        for _ in 0..<8 {
+            Thread.sleep(forTimeInterval: 0.5)
+            if !queued(id, in: s.id) { return "Delivered" }
+        }
+        return "Queued: open its pane"
+    }
+
+    /// Whether cmux still holds that message for the pane, unread by its agent.
+    nonisolated static func queued(_ id: String, in pane: String) -> Bool {
+        guard let out = run(["agent", "inbox", "--surface", pane, "--state", "queued", "--limit", "50", "--json"]),
+            let all = try? JSONSerialization.jsonObject(with: Data(out.utf8)) as? [String: Any],
+            let rows = all["messages"] as? [[String: Any]]
+        else { return true }
+        return rows.contains { $0["id"] as? String == id }
     }
 
     /// Run the cmux command; its output, or nil when it failed or took more than twelve seconds.
