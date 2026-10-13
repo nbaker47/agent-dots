@@ -71,7 +71,7 @@ struct Dot: View {
 }
 
 /// What is shown beside a dot: who it is, what it is doing, the last thing it said (its question, when it
-/// stopped on one), and a line to answer it with. Pinned, it shows all of what was said.
+/// stopped on one), and a line to answer it with. Pinned (by a click on it or on its dot), it shows all of what was said.
 struct Card: View {
     let session: AgentSession
     let full: Bool
@@ -135,6 +135,8 @@ struct Card: View {
         .frame(width: Strip.cardWidth, alignment: .leading)
         .glassEffect(Strip.glass(open.tick), in: .rect(cornerRadius: 20))
         .background(GeometryReader { g in Color.clear.preference(key: CardRects.self, value: [g.frame(in: .named("strip"))]) })
+        .contentShape(.rect(cornerRadius: 20))
+        .onTapGesture { if !full { open.pinned = session.id } }  // a click on a card pins it, as a click on its dot does
         .onReceive(NotificationCenter.default.publisher(for: .clickedAway)) { _ in focused = false }
     }
 }

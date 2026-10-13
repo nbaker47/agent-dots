@@ -16,7 +16,7 @@ The pictures use made-up sessions on a plain backdrop (`AGENTDOTS_DEMO=hover|pin
   in it, its workspace, and the last thing the agent said.
 - **A card pours out of its dot:** a neck of the same glass joins the strip to the card at the dot's level,
   the card's middle sits level with the dot, and it slides from dot to dot as the pointer moves.
-- **Click a dot** and its card stays open with everything the agent said, until you click anywhere else
+- **Click a dot, or its card** and the card stays open with everything the agent said, until you click anywhere else
   (or press Escape).
 - **When an agent asks something**, its card opens by itself beside its dot, with the question.
 - **Answer from the card:** type in it and press Return. The message goes through `cmux agent message`,
