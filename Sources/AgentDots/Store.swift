@@ -60,6 +60,10 @@ final class Store: ObservableObject {
     private var live: Set<String>?  // the panes cmux has now; nil until cmux has answered once
     private var ticks = 0
 
+    /// How long after it last said or did anything a session keeps its dot.
+    static let recent: TimeInterval = 600
+    var holding: Set<String> = []  // the panes whose cards are open: they keep their dots while they are looked at
+
     nonisolated static let cmux: String = {
         let bundled = "/Applications/cmux.app/Contents/Resources/bin/cmux"
         return FileManager.default.isExecutableFile(atPath: bundled) ? bundled : "/usr/bin/env"
@@ -105,7 +109,8 @@ final class Store: ObservableObject {
         }
     }
 
-    /// The state files, one a pane. A pane cmux no longer has is left out.
+    /// The state files, one a pane. A pane cmux no longer has is left out, and so is one that has been quiet
+    /// for ten minutes (neither its state nor its transcript has changed), unless it is working or needs a person.
     private func read() {
         let fm = FileManager.default
         var found: [AgentSession] = []
@@ -118,6 +123,9 @@ final class Store: ObservableObject {
                 else { continue }
                 if let live, !live.contains(pane) { continue }
                 let changed = (try? fm.attributesOfItem(atPath: file.path)[.modificationDate] as? Date) ?? Date()
+                let spoke = transcripts[pane].flatMap { try? fm.attributesOfItem(atPath: $0.path)[.modificationDate] as? Date }
+                let quiet = Date().timeIntervalSince(max(changed, spoke ?? changed)) > Self.recent
+                if quiet, state == .done || state == .ready, !holding.contains(pane), sent != pane { continue }
                 found.append(
                     AgentSession(
                         id: pane, workspaceID: ws, name: names[pane] ?? "agent", workspace: names[ws] ?? "",

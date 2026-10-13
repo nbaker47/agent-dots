@@ -12,6 +12,9 @@ The pictures use made-up sessions on a plain backdrop (`AGENTDOTS_DEMO=hover|pin
 
 - **Blue, breathing:** working. **Amber, ringing:** needs you. **Green:** finished, not looked at yet.
   **Grey:** idle.
+- **Only what is recent:** a session keeps its dot for ten minutes after it last said or did anything. One
+  that is working or needs you always has its dot; a finished or idle one that has been quiet longer goes,
+  and comes back when it speaks again.
 - **Rest the pointer on a dot** and it shows its card: the session's name, its state, how long it has been
   in it, its workspace, and the last thing the agent said.
 - **A card pours out of its dot:** a neck of the same glass joins the strip to the card at the dot's level,

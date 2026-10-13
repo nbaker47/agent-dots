@@ -83,6 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         beat += 1
         if beat % 15 == 0 { open.tick.toggle() }  // twice a second the glass looks at what is behind it (`Strip.glass`)
         if Store.demo != nil { return }  // the pictures are posed, not pointed at
+        store.holding = Set([open.pinned, open.typingIn, open.hovered].compactMap { $0 })
         let frame = panel.frame
         let at = NSEvent.mouseLocation
         let point = CGPoint(x: at.x - frame.minX, y: frame.maxY - at.y)  // in the window, from its top left
